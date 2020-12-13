@@ -5,7 +5,13 @@ use serde_derive::{Serialize, Deserialize};
 use chrono::{Duration, Local};
 use std::time::Duration as Dur;
 use log::info;
+use mobc::Pool;
+use mobc_redis::RedisConnectionManager;
+use uuid::Uuid;
 
+mod mobc_pool;
+
+pub type MobcPool = Pool<RedisConnectionManager>;
 
 use rdkafka::config::ClientConfig;
 use rdkafka::message::OwnedHeaders;
@@ -19,92 +25,176 @@ struct Claims {
     exp: i64,
 }
 
-async fn index(_req: HttpRequest) -> impl Responder {
-    let iat = Local::now();
-    let expp = iat + Duration::hours(i64::from(3600));
+async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+    // check if there is a queue, if there is, create an ID and forward to /waiting-room
+    // if there isn't a queue, generate a token and forward to the original referrer
 
-    let my_claims = Claims {
-        sub: "blah".to_string(),
-        qid: "54331".to_string(),
-        exp: expp.timestamp(),
-    };
+    // TODO: move the value to an ENV variable. Or a redis value?
+    let should_queue_limit: u32 = 100;
 
-    let token = encode(&Header::default(), &my_claims, &EncodingKey::from_secret("12345".as_ref()));
+    let active_users = mobc_pool::llen(
+        &mobc_pool,
+        ("active_users".to_string()).as_str(),
+    ).await;
 
-    println!("{:?}", token);
-    let url = format!("http://localhost:3000?token={}", token.unwrap());
+    // TODO: create a cookie and a JWT token for the referral
+    let uuid = Uuid::new_v4();
 
-    HttpResponse::Found()
-        .header(http::header::LOCATION, url)
-        .finish()
-}
+    // check if the user should queue
+    if active_users.unwrap() > should_queue_limit {
+        let lpush = mobc_pool::lpush(
+            &mobc_pool,
+            ("queue".to_string()).as_str(),
+            (uuid.to_string()).as_str()
+        ).await;
+        println!("{:?}", lpush);
 
-async fn expend_token(_req: HttpRequest) -> impl Responder {
-    // TODO: Parse the token, extract the user, send a completed message to kafka for that user.
-
-    // produce a kafka message
-    let topic = "test";
-    let brokers = "localhost:9092";
-    let producer: &FutureProducer = &ClientConfig::new()
-        .set("bootstrap.servers", brokers)
-        .set("message.timeout.ms", "5000")
-        .create()
-        .expect("Producer creation error");
-
-        let delivery_status = producer
-                .send(
-                    FutureRecord::to(topic)
-                        .payload(&format!("Message {}", "payload"))
-                        .key(&format!("Key {}", "key"))
-                        .headers(OwnedHeaders::new().add("header_key", "header_value")),
-                        Dur::from_secs(0),
-                )
-                .await;
-
-        info!("Future completed. Result: {:?}", delivery_status);
-        HttpResponse::Ok()
+        HttpResponse::Found()
+            .header(http::header::LOCATION, "/waiting-room")
             .finish()
+    } else {
+        let iat = Local::now();
+        let expp = iat + Duration::hours(i64::from(3600));
+    
+        let my_claims = Claims {
+            sub: "blah".to_string(),
+            qid: uuid.to_string(),
+            exp: expp.timestamp(),
+        };
+    
+        let token = encode(&Header::default(), &my_claims, &EncodingKey::from_secret("12345".as_ref()));
+    
+        println!("{:?}", token);
+        let url = format!("http://localhost:3000?token={}", token.unwrap());
+    
+        HttpResponse::Found()
+            .header(http::header::LOCATION, url)
+            .finish()
+    }
 }
 
-async fn check(_req: HttpRequest) -> impl Responder {
+async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
     // check the redis cache directly if we are ready to check position
-    
+
+    // let x: u32 = 0;
+    // let set_incr = mobc_pool::set_str(
+    //     &mobc_pool,
+    //     ("incr".to_string()).as_str(),
+    //     (x.to_string()).as_str(),
+    //     60usize,
+    // ).await;
+    // println!("{:?}", set_incr);
+
+    // test lpop
+    // let lpop = mobc_pool::lpop(
+    //     &mobc_pool,
+    //     ("queue".to_string()).as_str()
+    // ).await;
+    // println!("{:?}", lpop);
+
+    // for i in 0..100 {
+    //     let uuid = Uuid::new_v4();
+    //     let lpush = mobc_pool::lpush(
+    //         &mobc_pool,
+    //         ("queue".to_string()).as_str(),
+    //         (uuid.to_string()).as_str()
+    //     ).await;
+    //     println!("{:?}", lpush);
+    // }
+
+    // test incrementor
+
+    // let incr = mobc_pool::incr(
+    //     &mobc_pool,
+    //     ("incr".to_string()).as_str(),
+    // ).await;
+    // println!("{:?}", incr);
+
+    // get value by key
+    // let hit_cache = mobc_pool::get_str(
+    //     &mobc_pool,
+    //     ("incr".to_string()).as_str(),
+    // ).await;
+    // println!("{:?}", hit_cache);
     HttpResponse::Ok()
         .finish()
 }
 
-async fn produce(brokers: &str, topic_name: &str) {
+async fn waiting_room(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+    // serve the waiting room page, showing position in queue and the time until exit
+    let hit_cache = mobc_pool::get_str(
+        &mobc_pool,
+        ("key".to_string()).as_str(),
+    ).await;
+    println!("{:?}", hit_cache);
+    HttpResponse::Ok()
+        .finish()
+}
 
-    let producer: &FutureProducer = &ClientConfig::new()
-        .set("bootstrap.servers", brokers)
-        .set("message.timeout.ms", "5000")
-        .create()
-        .expect("Producer creation error");
+async fn expend_token(_req: HttpRequest, producer: web::Data<FutureProducer>, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+    // TODO: Parse the token, extract the user, send a completed message to kafka for that user.
+    // produce a kafka message
+    let topic = "test";
+    let delivery_status = producer
+        .send(
+            FutureRecord::to(topic)
+                .payload(&format!("Message {}", "payload"))
+                .key(&format!("Key {}", "key"))
+                .headers(OwnedHeaders::new().add("header_key", "header_value")),
+                Dur::from_secs(0),
+        ).await;
+    info!("Future completed. Result: {:?}", delivery_status);
 
+    // set redis key
+    let result = mobc_pool::set_str(
+        &mobc_pool,
+        ("key".to_string()).as_str(),
+        ("value".to_string()).as_str(),
+        60usize,
+    ).await
+    .map_err(|e| {
+        println!("Failed to execute query: {:?}", e);
+        HttpResponse::InternalServerError().finish()
+    });
+    println!("{:?}", result);
 
-        let delivery_status = producer
-                .send(
-                    FutureRecord::to(topic_name)
-                        .payload(&format!("Message {}", 1))
-                        .key(&format!("Key {}", 1))
-                        .headers(OwnedHeaders::new().add("header_key", "header_value")),
-                        Dur::from_secs(0),
-                )
-                .await;
+    // retrieve redis key
+    let hit_cache = mobc_pool::get_str(
+        &mobc_pool,
+        ("key".to_string()).as_str(),
+    ).await;
+    println!("{:?}", hit_cache);
 
-        info!("Future completed. Result: {:?}", delivery_status);
+    // return temporary 200
+    HttpResponse::Ok()
+        .finish()
 }
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    let mut listenfd = ListenFd::from_env();
-    let mut server = HttpServer::new(||
+    let mobc_pool = mobc_pool::connect().await.expect("can create mobc pool");
+    let mobc_pool = web::Data::new(mobc_pool);
+
+    let brokers = "localhost:9092";
+    let producer: FutureProducer = ClientConfig::new()
+        .set("bootstrap.servers", brokers)
+        .set("message.timeout.ms", "5000")
+        .create()
+        .expect("Producer creation error");
+    let producer = web::Data::new(producer);
+
+    let mut server = HttpServer::new(move ||
         App::new()
         .route("/", web::get().to(index))
-        .route("/check", web::get().to(check))
+        .route("/status", web::get().to(status))
+        .route("/waiting-room", web::get().to(waiting_room))
         .route("/expend", web::get().to(expend_token))
+
+        .app_data(producer.clone())
+        .app_data(mobc_pool.clone())
     );
 
+    let mut listenfd = ListenFd::from_env();
     server = if let Some(l) = listenfd.take_tcp_listener(0).unwrap() {
         server.listen(l)?
     } else {
