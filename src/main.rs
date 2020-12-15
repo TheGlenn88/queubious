@@ -1,12 +1,12 @@
-use actix_web::{web, http, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use listenfd::ListenFd;
-use jsonwebtoken::{encode, Header, EncodingKey};
-use serde_derive::{Serialize, Deserialize};
+use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use chrono::{Duration, Local};
-use std::time::Duration as Dur;
+use jsonwebtoken::{encode, EncodingKey, Header};
+use listenfd::ListenFd;
 use log::info;
 use mobc::Pool;
 use mobc_redis::RedisConnectionManager;
+use serde_derive::{Deserialize, Serialize};
+use std::time::Duration as Dur;
 use uuid::Uuid;
 
 mod mobc_pool;
@@ -32,10 +32,7 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
     // TODO: move the value to an ENV variable. Or a redis value?
     let should_queue_limit: u32 = 100;
 
-    let active_users = mobc_pool::llen(
-        &mobc_pool,
-        ("active_users".to_string()).as_str(),
-    ).await;
+    let active_users = mobc_pool::llen(&mobc_pool, "active_users").await;
 
     // TODO: create a cookie and a JWT token for the referral
     let uuid = Uuid::new_v4();
@@ -44,9 +41,10 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
     if active_users.unwrap() > should_queue_limit {
         let lpush = mobc_pool::lpush(
             &mobc_pool,
-            ("queue".to_string()).as_str(),
-            (uuid.to_string()).as_str()
-        ).await;
+            "queue",
+            (uuid.to_string()).as_str(),
+        )
+        .await;
         println!("{:?}", lpush);
 
         HttpResponse::Found()
@@ -55,18 +53,22 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
     } else {
         let iat = Local::now();
         let expp = iat + Duration::hours(i64::from(3600));
-    
+
         let my_claims = Claims {
             sub: "blah".to_string(),
             qid: uuid.to_string(),
             exp: expp.timestamp(),
         };
-    
-        let token = encode(&Header::default(), &my_claims, &EncodingKey::from_secret("12345".as_ref()));
-    
+
+        let token = encode(
+            &Header::default(),
+            &my_claims,
+            &EncodingKey::from_secret("12345".as_ref()),
+        );
+
         println!("{:?}", token);
         let url = format!("http://localhost:3000?token={}", token.unwrap());
-    
+
         HttpResponse::Found()
             .header(http::header::LOCATION, url)
             .finish()
@@ -79,7 +81,7 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
     // let x: u32 = 0;
     // let set_incr = mobc_pool::set_str(
     //     &mobc_pool,
-    //     ("incr".to_string()).as_str(),
+    //     "incr",
     //     (x.to_string()).as_str(),
     //     60usize,
     // ).await;
@@ -88,7 +90,7 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
     // test lpop
     // let lpop = mobc_pool::lpop(
     //     &mobc_pool,
-    //     ("queue".to_string()).as_str()
+    //     "queue"
     // ).await;
     // println!("{:?}", lpop);
 
@@ -96,7 +98,7 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
     //     let uuid = Uuid::new_v4();
     //     let lpush = mobc_pool::lpush(
     //         &mobc_pool,
-    //         ("queue".to_string()).as_str(),
+    //         "queue",
     //         (uuid.to_string()).as_str()
     //     ).await;
     //     println!("{:?}", lpush);
@@ -106,32 +108,33 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
 
     // let incr = mobc_pool::incr(
     //     &mobc_pool,
-    //     ("incr".to_string()).as_str(),
+    //     "incr",
     // ).await;
     // println!("{:?}", incr);
 
     // get value by key
     // let hit_cache = mobc_pool::get_str(
     //     &mobc_pool,
-    //     ("incr".to_string()).as_str(),
+    //     "incr",
     // ).await;
     // println!("{:?}", hit_cache);
-    HttpResponse::Ok()
-        .finish()
+    HttpResponse::Ok().finish()
 }
 
 async fn waiting_room(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
     // serve the waiting room page, showing position in queue and the time until exit
-    let hit_cache = mobc_pool::get_str(
-        &mobc_pool,
-        ("key".to_string()).as_str(),
-    ).await;
+    let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
     println!("{:?}", hit_cache);
     HttpResponse::Ok()
-        .finish()
+        .content_type("text/html")
+        .body("waiting, room")
 }
 
-async fn expend_token(_req: HttpRequest, producer: web::Data<FutureProducer>, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+async fn expend_token(
+    _req: HttpRequest,
+    producer: web::Data<FutureProducer>,
+    mobc_pool: web::Data<MobcPool>,
+) -> impl Responder {
     // TODO: Parse the token, extract the user, send a completed message to kafka for that user.
     // produce a kafka message
     let topic = "test";
@@ -141,17 +144,19 @@ async fn expend_token(_req: HttpRequest, producer: web::Data<FutureProducer>, mo
                 .payload(&format!("Message {}", "payload"))
                 .key(&format!("Key {}", "key"))
                 .headers(OwnedHeaders::new().add("header_key", "header_value")),
-                Dur::from_secs(0),
-        ).await;
+            Dur::from_secs(0),
+        )
+        .await;
     info!("Future completed. Result: {:?}", delivery_status);
 
     // set redis key
     let result = mobc_pool::set_str(
         &mobc_pool,
-        ("key".to_string()).as_str(),
-        ("value".to_string()).as_str(),
+        "key",
+        "value",
         60usize,
-    ).await
+    )
+    .await
     .map_err(|e| {
         println!("Failed to execute query: {:?}", e);
         HttpResponse::InternalServerError().finish()
@@ -159,15 +164,11 @@ async fn expend_token(_req: HttpRequest, producer: web::Data<FutureProducer>, mo
     println!("{:?}", result);
 
     // retrieve redis key
-    let hit_cache = mobc_pool::get_str(
-        &mobc_pool,
-        ("key".to_string()).as_str(),
-    ).await;
+    let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
     println!("{:?}", hit_cache);
 
     // return temporary 200
-    HttpResponse::Ok()
-        .finish()
+    HttpResponse::Ok().finish()
 }
 
 #[actix_rt::main]
@@ -183,16 +184,15 @@ async fn main() -> std::io::Result<()> {
         .expect("Producer creation error");
     let producer = web::Data::new(producer);
 
-    let mut server = HttpServer::new(move ||
+    let mut server = HttpServer::new(move || {
         App::new()
-        .route("/", web::get().to(index))
-        .route("/status", web::get().to(status))
-        .route("/waiting-room", web::get().to(waiting_room))
-        .route("/expend", web::get().to(expend_token))
-
-        .app_data(producer.clone())
-        .app_data(mobc_pool.clone())
-    );
+            .route("/", web::get().to(index))
+            .route("/status", web::get().to(status))
+            .route("/waiting-room", web::get().to(waiting_room))
+            .route("/expend", web::get().to(expend_token))
+            .app_data(producer.clone())
+            .app_data(mobc_pool.clone())
+    });
 
     let mut listenfd = ListenFd::from_env();
     server = if let Some(l) = listenfd.take_tcp_listener(0).unwrap() {

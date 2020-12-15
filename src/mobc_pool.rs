@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use mobc::{Connection, Pool};
-use mobc_redis::{redis, RedisConnectionManager};
 use mobc_redis::redis::{AsyncCommands, FromRedisValue};
+use mobc_redis::{redis, RedisConnectionManager};
 use thiserror::Error;
+
 
 pub type MobcPool = Pool<RedisConnectionManager>;
 pub type MobcCon = Connection<RedisConnectionManager>;
@@ -55,9 +56,13 @@ async fn get_con(pool: &MobcPool) -> Result<MobcCon> {
 
 pub async fn set_str(pool: &MobcPool, key: &str, value: &str, ttl_seconds: usize) -> Result<()> {
     let mut con = get_con(&pool).await?;
-    con.set(key, value).await.map_err(MobcError::RedisCMDError)?;
+    con.set(key, value)
+        .await
+        .map_err(MobcError::RedisCMDError)?;
     if ttl_seconds > 0 {
-        con.expire(key, ttl_seconds).await.map_err(MobcError::RedisCMDError)?;
+        con.expire(key, ttl_seconds)
+            .await
+            .map_err(MobcError::RedisCMDError)?;
     }
     Ok(())
 }
@@ -92,7 +97,10 @@ pub async fn decr(pool: &MobcPool, key: &str) -> Result<bool> {
 
 pub async fn lpush(pool: &MobcPool, key: &str, value: &str) -> Result<bool> {
     let mut con = get_con(&pool).await?;
-    let value = con.lpush(key, value).await.map_err(MobcError::RedisCMDError)?;
+    let value = con
+        .lpush(key, value)
+        .await
+        .map_err(MobcError::RedisCMDError)?;
 
     Ok(value)
 }
