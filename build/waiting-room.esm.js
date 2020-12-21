@@ -1,0 +1,1 @@
+import{p as t,b as a}from"./p-6291a37a.js";(()=>{const a=import.meta.url,r={};return""!==a&&(r.resourcesUrl=new URL(".",a).href),t(r)})().then((t=>a([["p-2d47bacf",[[1,"waiting-room",{position:[514],statusUrl:[1,"status-url"],refreshQueueData:[64]}]]]],t)));

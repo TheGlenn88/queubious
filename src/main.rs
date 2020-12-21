@@ -1,4 +1,4 @@
-use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer, Responder, Result};
 use chrono::{Duration, Local};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use listenfd::ListenFd;
@@ -8,6 +8,11 @@ use mobc_redis::RedisConnectionManager;
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration as Dur;
 use uuid::Uuid;
+use tera::Tera;
+use tera::Context;
+
+use actix_files::NamedFile;
+use std::path::PathBuf;
 
 mod mobc_pool;
 
@@ -25,6 +30,10 @@ struct Claims {
     exp: i64,
 }
 
+pub struct AppData {
+    pub tmpl: Tera,
+}
+
 async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
     // check if there is a queue, if there is, create an ID and forward to /waiting-room
     // if there isn't a queue, generate a token and forward to the original referrer
@@ -39,12 +48,7 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
 
     // check if the user should queue
     if active_users.unwrap() > should_queue_limit {
-        let lpush = mobc_pool::lpush(
-            &mobc_pool,
-            "queue",
-            (uuid.to_string()).as_str(),
-        )
-        .await;
+        let lpush = mobc_pool::lpush(&mobc_pool, "queue", (uuid.to_string()).as_str()).await;
         println!("{:?}", lpush);
 
         HttpResponse::Found()
@@ -121,13 +125,16 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
     HttpResponse::Ok().finish()
 }
 
-async fn waiting_room(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+async fn waiting_room(_req: HttpRequest, mobc_pool: web::Data<MobcPool>, data: web::Data<AppData>) -> impl Responder {
     // serve the waiting room page, showing position in queue and the time until exit
-    let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
-    println!("{:?}", hit_cache);
-    HttpResponse::Ok()
-        .content_type("text/html")
-        .body("waiting, room")
+    // let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
+    // println!("{:?}", hit_cache);
+
+    let mut ctx = Context::new();
+    ctx.insert("position", &1234);
+    let rendered = data.tmpl.render("index.html", &ctx).unwrap();
+
+    HttpResponse::Ok().body(rendered)
 }
 
 async fn expend_token(
@@ -150,17 +157,12 @@ async fn expend_token(
     info!("Future completed. Result: {:?}", delivery_status);
 
     // set redis key
-    let result = mobc_pool::set_str(
-        &mobc_pool,
-        "key",
-        "value",
-        60usize,
-    )
-    .await
-    .map_err(|e| {
-        println!("Failed to execute query: {:?}", e);
-        HttpResponse::InternalServerError().finish()
-    });
+    let result = mobc_pool::set_str(&mobc_pool, "key", "value", 60usize)
+        .await
+        .map_err(|e| {
+            println!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        });
     println!("{:?}", result);
 
     // retrieve redis key
@@ -169,6 +171,11 @@ async fn expend_token(
 
     // return temporary 200
     HttpResponse::Ok().finish()
+}
+
+async fn static_files(req: HttpRequest) -> Result<NamedFile> {
+    let path: PathBuf = req.match_info().query("filename").parse().unwrap();
+    Ok(NamedFile::open(path)?)
 }
 
 #[actix_rt::main]
@@ -184,12 +191,18 @@ async fn main() -> std::io::Result<()> {
         .expect("Producer creation error");
     let producer = web::Data::new(producer);
 
+    // let tera = Tera::new(format!("{}{}", dotenv!("TEMPLATE_DIR"), "/templates/**/*").as_str())
+    let tera = Tera::new(format!("{}", "templates/**/*").as_str())
+    .unwrap();
+
     let mut server = HttpServer::new(move || {
         App::new()
             .route("/", web::get().to(index))
             .route("/status", web::get().to(status))
             .route("/waiting-room", web::get().to(waiting_room))
             .route("/expend", web::get().to(expend_token))
+            .route("/{filename:.*}", web::get().to(static_files))
+            .data(AppData { tmpl: tera.clone() })
             .app_data(producer.clone())
             .app_data(mobc_pool.clone())
     });
