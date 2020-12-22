@@ -7,9 +7,9 @@ use mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration as Dur;
-use uuid::Uuid;
-use tera::Tera;
 use tera::Context;
+use tera::Tera;
+use uuid::Uuid;
 
 use actix_files::NamedFile;
 use std::path::PathBuf;
@@ -28,6 +28,11 @@ struct Claims {
     sub: String,
     qid: String,
     exp: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Status {
+    position: usize,
 }
 
 pub struct AppData {
@@ -122,10 +127,16 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
     //     "incr",
     // ).await;
     // println!("{:?}", hit_cache);
-    HttpResponse::Ok().finish()
+
+    // test sending a fixed response of position 999
+    HttpResponse::Ok().json(Status { position: 999usize })
 }
 
-async fn waiting_room(_req: HttpRequest, mobc_pool: web::Data<MobcPool>, data: web::Data<AppData>) -> impl Responder {
+async fn waiting_room(
+    _req: HttpRequest,
+    mobc_pool: web::Data<MobcPool>,
+    data: web::Data<AppData>,
+) -> impl Responder {
     // serve the waiting room page, showing position in queue and the time until exit
     // let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
     // println!("{:?}", hit_cache);
@@ -192,8 +203,7 @@ async fn main() -> std::io::Result<()> {
     let producer = web::Data::new(producer);
 
     // let tera = Tera::new(format!("{}{}", dotenv!("TEMPLATE_DIR"), "/templates/**/*").as_str())
-    let tera = Tera::new(format!("{}", "templates/**/*").as_str())
-    .unwrap();
+    let tera = Tera::new(format!("{}", "templates/**/*").as_str()).unwrap();
 
     let mut server = HttpServer::new(move || {
         App::new()
