@@ -1,8 +1,8 @@
-<!doctype html><html dir="ltr" lang="en"><head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0"> <title>Stencil Component Starter</title> <link rel="modulepreload" href="/build/p-8334ba6e.js"><script type="module" src="/build/p-8334ba6e.js" data-stencil data-resources-url="/build/" data-stencil-namespace="waiting-room"></script> <script nomodule="" src="/build/waiting-room.js" data-stencil></script> </head> <body> <waiting-room position="{{position}}" status-url="/status"></waiting-room> <script>
-      document.addEventListener('DOMContentLoaded', (event) => {
-          const waitingRoom = document.querySelector('waiting-room');
-          setInterval(() => {
-            waitingRoom.refreshQueueData();
-          }, 1000);
-      })
-  </script> </body></html>
+<!doctype html><html dir="ltr" lang="en"><head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0"> <title>Stencil Component Starter</title> <script type="module" data-stencil data-resources-url="/build/" data-stencil-namespace="waiting-room">import{p as t,b as a}from"/build/p-6291a37a.js";(()=>{const a=import.meta.url,r={};return""!==a&&(r.resourcesUrl=new URL(".",a).href),t(r)})().then((t=>a([["p-2d47bacf",[[1,"waiting-room",{position:[514],statusUrl:[1,"status-url"],refreshQueueData:[64]}]]]],t)));</script> <script nomodule="" src="/build/waiting-room.js" data-stencil></script> </head> <body> <waiting-room position="{{position}}" status-url="/status"></waiting-room> <script>
+  document.addEventListener('DOMContentLoaded', (event) => {
+      const waitingRoom = document.querySelector('waiting-room');
+      setInterval(() => {
+        waitingRoom.refreshQueueData();
+      }, 1000);
+  })
+</script> </body></html>
