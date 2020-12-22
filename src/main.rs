@@ -1,4 +1,6 @@
-use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer, Responder, Result};
+use actix_session::CookieSession;
+use actix_session::Session;
+use actix_web::{http, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder, Result};
 use chrono::{Duration, Local};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use listenfd::ListenFd;
@@ -29,17 +31,19 @@ struct Claims {
     qid: String,
     exp: i64,
 }
-
 #[derive(Debug, Serialize, Deserialize)]
 struct Status {
     position: usize,
 }
-
 pub struct AppData {
     pub tmpl: Tera,
 }
 
-async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
+async fn index(
+    _req: HttpRequest,
+    session: Session,
+    mobc_pool: web::Data<MobcPool>,
+) -> impl Responder {
     // check if there is a queue, if there is, create an ID and forward to /waiting-room
     // if there isn't a queue, generate a token and forward to the original referrer
 
@@ -48,13 +52,26 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
 
     let active_users = mobc_pool::llen(&mobc_pool, "active_users").await;
 
-    // TODO: create a cookie and a JWT token for the referral
-    let uuid = Uuid::new_v4();
+    let main_id: Uuid;
+
+    if let Some(id) = session.get::<String>("id").unwrap() {
+        main_id = Uuid::parse_str(id.as_str()).unwrap();
+    } else {
+        main_id = Uuid::new_v4();
+        session.set("id", main_id.to_string()).unwrap(); //TODO: don't just unwrap
+    }
+    println!("{:?}", main_id);
 
     // check if the user should queue
     if active_users.unwrap() > should_queue_limit {
-        let lpush = mobc_pool::lpush(&mobc_pool, "queue", (uuid.to_string()).as_str()).await;
-        println!("{:?}", lpush);
+        if let Some(should_queue) = session.get::<bool>("should_queue").unwrap() {
+            println!("{:?}", "found key in cookie");
+        } else {
+            let lpush = mobc_pool::lpush(&mobc_pool, "queue", (main_id.to_string()).as_str()).await;
+            session.set("should_queue", true); //TODO: don't just unwrap
+            println!("{:?}", "did not find key in cookie, pushing to redis");
+            println!("{:?}", lpush);
+        }
 
         HttpResponse::Found()
             .header(http::header::LOCATION, "/waiting-room")
@@ -64,8 +81,8 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
         let expp = iat + Duration::hours(i64::from(3600));
 
         let my_claims = Claims {
-            sub: "blah".to_string(),
-            qid: uuid.to_string(),
+            sub: "sub".to_string(),
+            qid: main_id.to_string(),
             exp: expp.timestamp(),
         };
 
@@ -75,7 +92,7 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
             &EncodingKey::from_secret("12345".as_ref()),
         );
 
-        println!("{:?}", token);
+        // TODO: forward to original referrer, store that in the cookie?
         let url = format!("http://localhost:3000?token={}", token.unwrap());
 
         HttpResponse::Found()
@@ -85,48 +102,9 @@ async fn index(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respon
 }
 
 async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Responder {
-    // check the redis cache directly if we are ready to check position
+    // TODO: check the active_users cache to see if uuid value exists in it. if it does, forward to referrer
 
-    // let x: u32 = 0;
-    // let set_incr = mobc_pool::set_str(
-    //     &mobc_pool,
-    //     "incr",
-    //     (x.to_string()).as_str(),
-    //     60usize,
-    // ).await;
-    // println!("{:?}", set_incr);
-
-    // test lpop
-    // let lpop = mobc_pool::lpop(
-    //     &mobc_pool,
-    //     "queue"
-    // ).await;
-    // println!("{:?}", lpop);
-
-    // for i in 0..100 {
-    //     let uuid = Uuid::new_v4();
-    //     let lpush = mobc_pool::lpush(
-    //         &mobc_pool,
-    //         "queue",
-    //         (uuid.to_string()).as_str()
-    //     ).await;
-    //     println!("{:?}", lpush);
-    // }
-
-    // test incrementor
-
-    // let incr = mobc_pool::incr(
-    //     &mobc_pool,
-    //     "incr",
-    // ).await;
-    // println!("{:?}", incr);
-
-    // get value by key
-    // let hit_cache = mobc_pool::get_str(
-    //     &mobc_pool,
-    //     "incr",
-    // ).await;
-    // println!("{:?}", hit_cache);
+    // TODO: if not, check the position of the user, and respond with it.
 
     // test sending a fixed response of position 999
     HttpResponse::Ok().json(Status { position: 999usize })
@@ -134,13 +112,11 @@ async fn status(_req: HttpRequest, mobc_pool: web::Data<MobcPool>) -> impl Respo
 
 async fn waiting_room(
     _req: HttpRequest,
-    mobc_pool: web::Data<MobcPool>,
+    _mobc_pool: web::Data<MobcPool>,
     data: web::Data<AppData>,
 ) -> impl Responder {
-    // serve the waiting room page, showing position in queue and the time until exit
-    // let hit_cache = mobc_pool::get_str(&mobc_pool, "key").await;
-    // println!("{:?}", hit_cache);
-
+    // TODO: read ID from cookie
+    // TODO: use LPOS to get the queue position
     let mut ctx = Context::new();
     ctx.insert("position", &1234);
     let rendered = data.tmpl.render("index.html", &ctx).unwrap();
@@ -154,7 +130,8 @@ async fn expend_token(
     mobc_pool: web::Data<MobcPool>,
 ) -> impl Responder {
     // TODO: Parse the token, extract the user, send a completed message to kafka for that user.
-    // produce a kafka message
+
+    // produce a test kafka message
     let topic = "test";
     let delivery_status = producer
         .send(
@@ -167,7 +144,7 @@ async fn expend_token(
         .await;
     info!("Future completed. Result: {:?}", delivery_status);
 
-    // set redis key
+    // set a redis key
     let result = mobc_pool::set_str(&mobc_pool, "key", "value", 60usize)
         .await
         .map_err(|e| {
@@ -194,12 +171,13 @@ async fn main() -> std::io::Result<()> {
     let mobc_pool = mobc_pool::connect().await.expect("can create mobc pool");
     let mobc_pool = web::Data::new(mobc_pool);
 
-    let brokers = "localhost:9092";
+    // setup kafka producer
+    let brokers = "localhost:9092"; // TODO: env this value
     let producer: FutureProducer = ClientConfig::new()
         .set("bootstrap.servers", brokers)
         .set("message.timeout.ms", "5000")
         .create()
-        .expect("Producer creation error");
+        .expect("Failed to create Kafka Producer");
     let producer = web::Data::new(producer);
 
     // let tera = Tera::new(format!("{}{}", dotenv!("TEMPLATE_DIR"), "/templates/**/*").as_str())
@@ -207,16 +185,24 @@ async fn main() -> std::io::Result<()> {
 
     let mut server = HttpServer::new(move || {
         App::new()
+            .wrap(
+                CookieSession::signed(&[0; 32])
+                    .domain("http://localhost")
+                    .name("queue_s")
+                    .path("/")
+                    .secure(false),
+            )
             .route("/", web::get().to(index))
             .route("/status", web::get().to(status))
             .route("/waiting-room", web::get().to(waiting_room))
             .route("/expend", web::get().to(expend_token))
-            .route("/{filename:.*}", web::get().to(static_files))
+            .route("/build/{filename:.*}", web::get().to(static_files))
             .data(AppData { tmpl: tera.clone() })
             .app_data(producer.clone())
             .app_data(mobc_pool.clone())
     });
 
+    // TODO: setup host and port as env
     let mut listenfd = ListenFd::from_env();
     server = if let Some(l) = listenfd.take_tcp_listener(0).unwrap() {
         server.listen(l)?
