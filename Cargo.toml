@@ -14,20 +14,25 @@ name = "queue"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "3.3.2"
-actix-rt = "1.1.1"
+actix-web = "4.0.0-beta.1"
+actix-rt = "2.0.0-beta.1"
+actix-files = "0.6.0-beta.1"
+actix-session = "0.4.0"
 listenfd = "0.3.3"
 serde = "1.0.118"
-jsonwebtoken = "7.2.0"
 serde_derive = "1.0.118"
+jsonwebtoken = "7.2.0"
 chrono = "0.4.19"
 rdkafka = "0.24.0"
 env_logger = "0.8.2"
 log = "0.4.11"
-mobc = { version = "0.5.12", features = ["tokio"] }
-thiserror = "1.0.22"
+thiserror = "1.0.23"
 uuid = { version = "0.8.1", features = ["v4"] }
-mobc-redis = "0.5.4"
-tera = "1.6.0"
-actix-files = "0.4.1"
-actix-session = "0.4.0"
+tera = "1.6.1"
+base64 = "0.13.0"
+dotenv = "0.15.0"
+redis = { version = "0.19.0", features = ["tokio-comp"] }
+deadpool-redis = "0.7.0"
+
+[patch.crates-io]
+actix-session = { path = '../../actix-extras/actix-session' }

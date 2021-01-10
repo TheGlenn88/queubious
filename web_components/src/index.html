@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html dir="ltr" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0" />
+    <title>Stencil Component Starter</title>
+
+    <script type="module" src="/build/waiting-room.esm.js"></script>
+    <script nomodule src="/build/waiting-room.js"></script>
+  </head>
+  <body>
+    <waiting-room progress="35" wait-time="5 mins" last-updated="19:55:01" position="1234" status_url="queueData.json"></waiting-room>
+    <script>
+      document.addEventListener('DOMContentLoaded', event => {
+        const waitingRoom = document.querySelector('waiting-room');
+        setInterval(() => {
+          waitingRoom.refreshQueueData();
+        }, 1000);
+      });
+    </script>
+  </body>
+</html>

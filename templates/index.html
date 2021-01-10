@@ -1,8 +1,81 @@
-<!doctype html><html dir="ltr" lang="en"><head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0"> <title>Stencil Component Starter</title> <script type="module" data-stencil data-resources-url="/build/" data-stencil-namespace="waiting-room">import{p as t,b as a}from"/build/p-6291a37a.js";(()=>{const a=import.meta.url,r={};return""!==a&&(r.resourcesUrl=new URL(".",a).href),t(r)})().then((t=>a([["p-2d47bacf",[[1,"waiting-room",{position:[514],statusUrl:[1,"status-url"],refreshQueueData:[64]}]]]],t)));</script> <script nomodule="" src="/build/waiting-room.js" data-stencil></script> </head> <body> <waiting-room position="{{position}}" status-url="/status"></waiting-room> <script>
-  document.addEventListener('DOMContentLoaded', (event) => {
-      const waitingRoom = document.querySelector('waiting-room');
-      setInterval(() => {
-        waitingRoom.refreshQueueData();
-      }, 30000);
-  })
-</script> </body></html>
+<!DOCTYPE html>
+<html dir="ltr" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0"
+    />
+    <title>Stencil Component Starter</title>
+    <script
+      type="module"
+      data-stencil
+      data-resources-url="/build/"
+      data-stencil-namespace="waiting-room"
+    >
+      import { p as e, b as s } from '/build/p-ba2c52de.js'
+      ;(() => {
+        const s = import.meta.url,
+          t = {}
+        return '' !== s && (t.resourcesUrl = new URL('.', s).href), e(t)
+      })().then((e) =>
+        s(
+          [
+            [
+              'p-bc23e25b',
+              [
+                [
+                  1,
+                  'waiting-room',
+                  {
+                    position: [514],
+                    progress: [514],
+                    wait_time: [513],
+                    last_updated: [513],
+                    status_url: [1],
+                    messages: [32],
+                    email: [32],
+                    email_sent: [32],
+                    refreshQueueData: [64],
+                  },
+                ],
+              ],
+            ],
+          ],
+          e,
+        ),
+      )
+    </script>
+    <script nomodule="" src="/build/waiting-room.js" data-stencil></script>
+    <style>
+      .waiting-room {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 400px;
+        height: 800px;
+        box-shadow: rgba(50, 50, 93, 0.25) 0px 6px 12px -2px,
+          rgba(0, 0, 0, 0.3) 0px 3px 7px -3px;
+      }
+    </style>
+  </head>
+  <body>
+    <waiting-room
+      class="waiting-room"
+      progress="{{progress}}"
+      wait_time="{{wait_time}}"
+      last_updated="{{last_updated}}"
+      position="{{position}}"
+      status_url="/status"
+    ></waiting-room>
+    <script>
+      document.addEventListener('DOMContentLoaded', (event) => {
+        const waitingRoom = document.querySelector('waiting-room')
+        setInterval(() => {
+          waitingRoom.refreshQueueData()
+        }, 30000)
+      })
+    </script>
+  </body>
+</html>
