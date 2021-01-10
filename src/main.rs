@@ -24,7 +24,11 @@ use rdkafka::producer::{FutureProducer, FutureRecord};
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: String,
+    iss: String,
     qid: String,
+    aud: String,
+    iat: i64,
+    nbf: i64,
     exp: i64,
 }
 
@@ -163,6 +167,21 @@ async fn get_status(session: Session, redis_pool: web::Data<Pool>) -> Status {
     }
 }
 
+async fn heartbeat(
+    _req: HttpRequest,
+    session: Session,
+    redis_pool: web::Data<Pool>,
+    _producer: web::Data<FutureProducer>,
+) -> impl Responder {
+    let mut redis_conn = redis_pool.get().await.unwrap();
+    if let Some(id) = session.get::<String>("id").unwrap() {
+        // TODO: implement heartbeat, need to think about how to manage active users. JS headbeat, store as a key with a ttl in redis
+        HttpResponse::Ok().finish()
+    } else {
+        HttpResponse::BadRequest().finish()
+    }
+}
+
 async fn index(
     _req: HttpRequest,
     session: Session,
@@ -220,22 +239,28 @@ async fn index(
         push_to_active(redis_pool.clone(), main_id).await;
 
         let iat = Local::now();
-        let expp = iat + Duration::hours(i64::from(3600));
+        let exp = iat + Duration::minutes(i64::from(20));
 
         let my_claims = Claims {
-            sub: "sub".to_string(),
+            sub: "queue-egress".to_string(),
+            iss: env::var("APP_URL").unwrap(),
+            aud: "http://localhost".to_string(),
             qid: main_id.to_string(),
-            exp: expp.timestamp(),
+            iat: iat.timestamp(),
+            nbf: iat.timestamp(),
+            exp: exp.timestamp(),
         };
 
         let token = encode(
             &Header::default(),
             &my_claims,
-            &EncodingKey::from_secret("12345".as_ref()),
+            &EncodingKey::from_base64_secret(&env::var("JWT_SECRET").unwrap()).unwrap(),
         );
 
+        println!("{}", &env::var("JWT_SECRET").unwrap());
+
         // TODO: forward to original referrer, store that in the cookie?
-        let url = format!("http://localhost:3000?token={}", token.unwrap());
+        let url = format!("http://127.0.0.1:8000?token={}", token.unwrap());
 
         HttpResponse::Found()
             .header(http::header::LOCATION, url)
@@ -255,7 +280,7 @@ async fn status(
     if let Some(_) = session.get::<String>("id").unwrap() {
         HttpResponse::Ok().json(get_status(session, redis_pool).await)
     } else {
-        HttpResponse::InternalServerError().finish()
+        HttpResponse::BadRequest().finish()
     }
 }
 
@@ -351,6 +376,7 @@ async fn main() -> std::io::Result<()> {
             )
             .route("/", web::get().to(index))
             .route("/status", web::get().to(status))
+            .route("/heartbeat", web::get().to(heartbeat))
             .route("/waiting-room", web::get().to(waiting_room))
             .route("/terminate/{session_id}", web::get().to(terminate_session))
             .route("/{filename:.*}", web::get().to(static_files))
