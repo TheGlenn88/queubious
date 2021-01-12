@@ -372,7 +372,7 @@ async fn main() -> std::io::Result<()> {
                     //TODO investivate locking to APP_URL
                     // .domain("http://localhost")
                     // .domain(env::var("APP_URL").unwrap())
-                    .name("queue_rs")
+                    .name("queubious_session")
                     .path("/")
                     .secure(false),
             )

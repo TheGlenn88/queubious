@@ -1722,7 +1722,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "queue"
+name = "queubious"
 version = "0.1.0"
 dependencies = [
  "actix-files",

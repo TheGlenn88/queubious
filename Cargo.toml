@@ -1,5 +1,5 @@
 [package]
-name = "queue"
+name = "queubious"
 version = "0.1.0"
 authors = ["Mike Glenn <mike.glenn@me.com>"]
 edition = "2018"
@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 path = "src/main.rs"
-name = "queue"
+name = "queubious"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
