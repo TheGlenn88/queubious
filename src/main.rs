@@ -30,6 +30,7 @@ struct Claims {
     iat: i64,
     nbf: i64,
     exp: i64,
+    cexp: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -249,6 +250,7 @@ async fn index(
             iat: iat.timestamp(),
             nbf: iat.timestamp(),
             exp: exp.timestamp(),
+            cexp: 20, // TODO: cookie expiry into env
         };
 
         let token = encode(
@@ -260,7 +262,7 @@ async fn index(
         println!("{}", &env::var("JWT_SECRET").unwrap());
 
         // TODO: forward to original referrer, store that in the cookie?
-        let url = format!("http://127.0.0.1:8000?token={}", token.unwrap());
+        let url = format!("http://127.0.0.1:8000?queubioustoken={}", token.unwrap());
 
         HttpResponse::Found()
             .header(http::header::LOCATION, url)
