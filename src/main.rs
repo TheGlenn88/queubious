@@ -183,6 +183,19 @@ async fn heartbeat(
     }
 }
 
+async fn script(
+    _req: HttpRequest,
+    redis_pool: web::Data<Pool>,
+    data: web::Data<AppData>,
+) -> impl Responder {
+    // TODO: render a javascript template for performing the heartbeat.
+    let status = get_status(session, redis_pool).await;
+    let mut ctx = Context::new();
+    let rendered = data.tmpl.render("index.html", &ctx).unwrap();
+
+    HttpResponse::Ok().body(rendered)
+}
+
 async fn index(
     _req: HttpRequest,
     session: Session,
