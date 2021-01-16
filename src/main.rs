@@ -348,6 +348,8 @@ async fn static_files(req: HttpRequest) -> Result<NamedFile> {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
+    println!("{:?}", env::var("REDIS_URL"));
+
     let redis_config = RedisConfig {
         url: Some(redis_uri()),
         pool: None,
@@ -407,7 +409,7 @@ async fn main() -> std::io::Result<()> {
 
     let bind_port = match env::var("BIND_PORT") {
         Ok(port) => port,
-        _ => String::from("8002"),
+        _ => String::from("80"),
     };
 
     let mut listenfd = ListenFd::from_env();

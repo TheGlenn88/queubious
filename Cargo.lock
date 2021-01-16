@@ -148,6 +148,7 @@ dependencies = [
 [[package]]
 name = "actix-session"
 version = "0.4.0"
+source = "git+https://github.com/andy128k/actix-extras?branch=update-dependencies#d7ac6473c7101088bcc448a74df6a0b2c19c6e1f"
 dependencies = [
  "actix-service",
  "actix-web",
