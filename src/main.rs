@@ -203,14 +203,20 @@ async fn heartbeat(
         .unwrap();
 
     if exists {
+        let timeout: String = (env::var("ACTIVE_SESSION_TIMEOUT")
+            .unwrap()
+            .parse::<u16>()
+            .unwrap()
+            * 60 as u16)
+            .to_string();
         cmd("EXPIRE")
-            .arg(&[&token.claims.qid, &"123".to_string()])
+            .arg(&[&token.claims.qid, &timeout])
             .execute_async(&mut redis_conn)
             .await
             .unwrap();
     }
     //TODO: store the initial time the key was set in here, so that you can give a MAX session time if needed
-    //TODO: move setting this key to when moving out of the queue, or bypassing the queue
+    //TODO: move the initial setting of this key to when moving out of the queue, or bypassing the queue
     // cmd("SET")
     //     .arg(&[&token.claims.qid, &"1".to_string()])
     //     .execute_async(&mut redis_conn)
@@ -295,7 +301,10 @@ async fn index(
             iat: iat.timestamp(),
             nbf: iat.timestamp(),
             exp: exp.timestamp(),
-            cexp: 20, // TODO: cookie expiry into env
+            cexp: env::var("ACTIVE_SESSION_TIMEOUT")
+                .unwrap()
+                .parse::<u16>()
+                .unwrap(),
         };
 
         let token = encode(
