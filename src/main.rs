@@ -1,11 +1,15 @@
+use actix_cors::Cors;
 use actix_session::CookieSession;
 use actix_session::Session;
-use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer, Responder, Result};
-use base64::decode;
+use actix_web::{
+    http, http::header, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder, Result,
+};
+use base64::decode as b64decode;
 use chrono::{Duration, Local};
 use deadpool_redis::{cmd, Config as RedisConfig, Pool};
 use dotenv::dotenv;
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::errors::Error as JwtError;
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, TokenData, Validation};
 use listenfd::ListenFd;
 use redis::RedisError;
 use serde_derive::{Deserialize, Serialize};
@@ -47,6 +51,12 @@ struct Message {
     timestamp: String,
     message: String,
 }
+
+#[derive(Serialize, Deserialize)]
+struct Heartbeat {
+    token: String,
+}
+
 pub struct AppData {
     pub tmpl: Tera,
 }
@@ -151,7 +161,7 @@ async fn get_status(session: Session, redis_pool: web::Data<Pool>) -> Status {
         Status {
             position: queue_position + 1,
             progress: percentage as usize,
-            // will need to crunch queue egress data to get an average wait time.
+            // todo: will need to crunch queue egress data to get an average wait time.
             wait_time: String::from("119 Minutes"),
             last_updated: Local::now().time().format("%H:%M:%S").to_string(),
             messages: Vec::new(),
@@ -160,7 +170,7 @@ async fn get_status(session: Session, redis_pool: web::Data<Pool>) -> Status {
         Status {
             position: 1,
             progress: 0 as usize,
-            // will need to crunch queue egress data to get an average wait time.
+            // todo: will need to crunch queue egress data to get an average wait time.
             wait_time: String::from("119 Minutes"),
             last_updated: Local::now().time().format("%H:%M:%S").to_string(),
             messages: Vec::new(),
@@ -170,27 +180,50 @@ async fn get_status(session: Session, redis_pool: web::Data<Pool>) -> Status {
 
 async fn heartbeat(
     _req: HttpRequest,
-    session: Session,
+    data: web::Json<Heartbeat>,
     redis_pool: web::Data<Pool>,
     _producer: web::Data<FutureProducer>,
 ) -> impl Responder {
+    let token: TokenData<Claims>;
+    match decode(
+        &data.token,
+        &DecodingKey::from_base64_secret(&env::var("JWT_SECRET").unwrap()).unwrap(),
+        &Validation::default(),
+    ) {
+        Ok(tok) => token = tok,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+
     let mut redis_conn = redis_pool.get().await.unwrap();
-    if let Some(id) = session.get::<String>("id").unwrap() {
-        // TODO: implement heartbeat, need to think about how to manage active users. JS headbeat, store as a key with a ttl in redis
-        HttpResponse::Ok().finish()
-    } else {
-        HttpResponse::BadRequest().finish()
+
+    let exists: bool = cmd("EXISTS")
+        .arg(&[&token.claims.qid])
+        .query_async(&mut redis_conn)
+        .await
+        .unwrap();
+
+    if exists {
+        cmd("EXPIRE")
+            .arg(&[&token.claims.qid, &"123".to_string()])
+            .execute_async(&mut redis_conn)
+            .await
+            .unwrap();
     }
+    //TODO: store the initial time the key was set in here, so that you can give a MAX session time if needed
+    //TODO: move setting this key to when moving out of the queue, or bypassing the queue
+    // cmd("SET")
+    //     .arg(&[&token.claims.qid, &"1".to_string()])
+    //     .execute_async(&mut redis_conn)
+    //     .await
+    //     .unwrap();
+
+    HttpResponse::Ok().finish()
 }
 
-async fn script(
-    _req: HttpRequest,
-    redis_pool: web::Data<Pool>,
-    data: web::Data<AppData>,
-) -> impl Responder {
-    // TODO: render a javascript template for performing the heartbeat.
+async fn script(_req: HttpRequest, data: web::Data<AppData>) -> impl Responder {
     let mut ctx = Context::new();
-    let rendered = data.tmpl.render("index.html", &ctx).unwrap();
+    ctx.insert("app_url", &env::var("APP_URL").unwrap());
+    let rendered = data.tmpl.render("queubious.js", &ctx).unwrap();
 
     HttpResponse::Ok().body(rendered)
 }
@@ -257,7 +290,7 @@ async fn index(
         let my_claims = Claims {
             sub: "queue-egress".to_string(),
             iss: env::var("APP_URL").unwrap(),
-            aud: "http://localhost".to_string(),
+            aud: "http://localhost:8000".to_string(),
             qid: main_id.to_string(),
             iat: iat.timestamp(),
             nbf: iat.timestamp(),
@@ -274,7 +307,7 @@ async fn index(
         println!("{}", &env::var("JWT_SECRET").unwrap());
 
         // TODO: forward to original referrer, store that in the cookie?
-        let url = format!("http://127.0.0.1:8000?queubioustoken={}", token.unwrap());
+        let url = format!("http://localhost:8000?queubioustoken={}", token.unwrap());
 
         HttpResponse::Found()
             .header(http::header::LOCATION, url)
@@ -304,7 +337,6 @@ async fn waiting_room(
     redis_pool: web::Data<Pool>,
     data: web::Data<AppData>,
 ) -> impl Responder {
-    // TODO: use LPOS to get the queue position
     let status = get_status(session, redis_pool).await;
     let mut ctx = Context::new();
     ctx.insert("position", &status.position);
@@ -321,10 +353,12 @@ async fn terminate_session(
     producer: web::Data<FutureProducer>,
     redis_pool: web::Data<Pool>,
 ) -> impl Responder {
+    // TODO: if there is a session, parse that, void the user
+    // TODO: if there is a token, parse that, void the user
+
     let session_id = req.match_info().get("session_id").unwrap();
     let _qty_terminated = terminate(redis_pool, session_id).await;
 
-    // TODO: Parse the token, extract the user, send a completed message to kafka for that user.
     // produce a test kafka message
     let topic = "terminate_session";
     let _delivery_status = producer
@@ -347,8 +381,6 @@ async fn static_files(req: HttpRequest) -> Result<NamedFile> {
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-
-    println!("{:?}", env::var("REDIS_URL"));
 
     let redis_config = RedisConfig {
         url: Some(redis_uri()),
@@ -382,7 +414,7 @@ async fn main() -> std::io::Result<()> {
     let mut server = HttpServer::new(move || {
         App::new()
             .wrap(
-                CookieSession::signed(&decode(env::var("APP_KEY").unwrap()).unwrap())
+                CookieSession::signed(&b64decode(env::var("APP_KEY").unwrap()).unwrap())
                     //TODO investivate locking to APP_URL
                     // .domain("http://localhost")
                     // .domain(env::var("APP_URL").unwrap())
@@ -390,16 +422,25 @@ async fn main() -> std::io::Result<()> {
                     .path("/")
                     .secure(false),
             )
+            .wrap(
+                Cors::default()
+                    .allow_any_origin()
+                    .allowed_methods(vec!["GET", "POST"])
+                    .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
+                    .allowed_header(header::CONTENT_TYPE)
+                    .supports_credentials()
+                    .max_age(3600),
+            )
             .route("/", web::get().to(index))
             .route("/status", web::get().to(status))
-            .route("/heartbeat", web::get().to(heartbeat))
+            .route("/queubious.js", web::get().to(script))
+            .route("/heartbeat", web::post().to(heartbeat))
             .route("/waiting-room", web::get().to(waiting_room))
             .route("/terminate/{session_id}", web::get().to(terminate_session))
             .route("/{filename:.*}", web::get().to(static_files))
             .data(AppData { tmpl: tera.clone() })
             .app_data(producer.clone())
             .app_data(redis_pool.clone())
-        // .app_data(mobc_pool.clone())
     });
 
     let bind_ip = match env::var("BIND_IP") {
@@ -418,6 +459,8 @@ async fn main() -> std::io::Result<()> {
     } else {
         server.bind(format!("{}:{}", bind_ip, bind_port))?
     };
+
+    println!("started server on port {}", bind_port);
 
     server.run().await
 }
