@@ -1,19 +1,20 @@
 use actix_cors::Cors;
+use actix_rt::Arbiter;
 use actix_session::CookieSession;
 use actix_session::Session;
 use actix_web::{
-    http, http::header, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder, Result,
+    http, http::header, web, App, HttpRequest, HttpResponse, HttpServer, Responder, Result,
 };
 use base64::decode as b64decode;
 use chrono::{Duration, Local};
 use deadpool_redis::{cmd, Config as RedisConfig, Pool};
 use dotenv::dotenv;
-use jsonwebtoken::errors::Error as JwtError;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, TokenData, Validation};
 use listenfd::ListenFd;
 use redis::RedisError;
 use serde_derive::{Deserialize, Serialize};
 use std::env;
+use std::thread;
 use std::time::Duration as Dur;
 use tera::Context;
 use tera::Tera;
@@ -262,7 +263,7 @@ async fn index(
 
     // check if the user should queue
     // TODO: check if the user is in active users
-    if queue_length > 1 || active_users > should_queue_limit {
+    if queue_length >= 1 || active_users >= should_queue_limit {
         println!("queueing {}", queue_length);
         if let None = session.get::<bool>("should_queue").unwrap() {
             // produce a test kafka message to add to queue
@@ -286,9 +287,28 @@ async fn index(
             .header(http::header::LOCATION, "/waiting-room")
             .finish()
     } else {
-        println!("bybassing queue {}", queue_length);
+        println!("bypassing queue {}", queue_length);
 
         push_to_active(redis_pool.clone(), main_id).await;
+
+        cmd("SET")
+            .arg(&[&main_id.to_string(), &Local::now().to_string()])
+            .execute_async(&mut redis_conn)
+            .await
+            .unwrap();
+
+        let timeout: String = (env::var("ACTIVE_SESSION_TIMEOUT")
+            .unwrap()
+            .parse::<u16>()
+            .unwrap()
+            * 60 as u16)
+            .to_string();
+
+        cmd("EXPIRE")
+            .arg(&[&main_id.to_string(), &timeout])
+            .execute_async(&mut redis_conn)
+            .await
+            .unwrap();
 
         let iat = Local::now();
         let exp = iat + Duration::minutes(i64::from(20));
@@ -312,8 +332,6 @@ async fn index(
             &my_claims,
             &EncodingKey::from_base64_secret(&env::var("JWT_SECRET").unwrap()).unwrap(),
         );
-
-        println!("{}", &env::var("JWT_SECRET").unwrap());
 
         // TODO: forward to original referrer, store that in the cookie?
         let url = format!("http://localhost:8000?queubioustoken={}", token.unwrap());
@@ -346,6 +364,7 @@ async fn waiting_room(
     redis_pool: web::Data<Pool>,
     data: web::Data<AppData>,
 ) -> impl Responder {
+    //TODO: remove the waiting_room function and combine this into the index function
     let status = get_status(session, redis_pool).await;
     let mut ctx = Context::new();
     ctx.insert("position", &status.position);
@@ -468,6 +487,81 @@ async fn main() -> std::io::Result<()> {
     } else {
         server.bind(format!("{}:{}", bind_ip, bind_port))?
     };
+
+    Arbiter::spawn(async move {
+        loop {
+            /**
+             * TODO: retrieve entire active list, loop the list and check dirctly for it's key/string value
+             * if it exists, leave it, if it doesn't exist, remove the key from active and push in a new key
+             * from the queue (if the queue exists)
+             */
+            let active: Vec<String> = cmd("LRANGE")
+                .arg(&["active", "0", "100"])
+                .query_async(&mut redis_conn)
+                .await
+                .unwrap();
+
+            for a in active {
+                let exists: bool = cmd("EXISTS")
+                    .arg(&[&a])
+                    .query_async(&mut redis_conn)
+                    .await
+                    .unwrap();
+                if !exists {
+                    println!("removing from active {}", &a);
+                    cmd("LREM")
+                        .arg(&["active", "0", &a])
+                        .query_async(&mut redis_conn)
+                        .await
+                        .unwrap()
+                }
+            }
+
+            let active_user_limit: usize = cmd("GET")
+                .arg(&["active_user_limit"])
+                .query_async(&mut redis_conn)
+                .await
+                .unwrap();
+
+            let active_length: usize = cmd("LLEN")
+                .arg(&["active"])
+                .query_async(&mut redis_conn)
+                .await
+                .unwrap();
+
+            let timeout: String = (env::var("ACTIVE_SESSION_TIMEOUT")
+                .unwrap()
+                .parse::<u16>()
+                .unwrap()
+                * 60 as u16)
+                .to_string();
+
+            if active_length < active_user_limit {
+                println!("shorter");
+                let qty_to_move = active_user_limit - active_length;
+                for _ in 0..qty_to_move {
+                    // TODO: LMOVE is only in redis 6.2...
+                    let user: String = cmd("LMOVE")
+                        .arg(&["queue", "active", "LEFT", "RIGHT"])
+                        .query_async(&mut redis_conn)
+                        .await
+                        .unwrap();
+                    println!("moving, {}", user);
+                    cmd("SET")
+                        .arg(&[&user, &Local::now().to_string()])
+                        .execute_async(&mut redis_conn)
+                        .await
+                        .unwrap();
+                    cmd("EXPIRE")
+                        .arg(&[&user, &timeout])
+                        .execute_async(&mut redis_conn)
+                        .await
+                        .unwrap();
+                }
+            }
+            thread::sleep(Dur::from_millis(1000));
+        }
+    });
 
     println!("started server on port {}", bind_port);
 
