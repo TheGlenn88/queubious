@@ -15,11 +15,23 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
   redis:
     hostname: redis
-    image: redis:6.0.9-alpine
+    image: redis:6.2-rc2-alpine
     ports:
       - '6379:6379'
     volumes:
       - local-redis-volume:/data:cached
+  postgres:
+    container_name: postgres
+    hostname: postgres
+    image: postgres:13-alpine
+    volumes:
+      - postgresql-volume:/var/lib/postgresql/data:cached
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=ticketing
   redisinsight:
     hostname: redisinsight
     image: redislabs/redisinsight:latest
@@ -31,4 +43,6 @@ volumes:
   local-redis-volume:
     external: false
   local-redisinsight-volume:
+    external: false
+  postgresql-volume:
     external: false

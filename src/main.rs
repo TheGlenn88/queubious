@@ -155,10 +155,6 @@ async fn get_status(session: Session, redis_pool: web::Data<Pool>) -> Status {
         }
         let percentage: f32 = 100.0 - ((queue_position as f32 / original_position as f32) * 100.0);
 
-        println!("original pos: {}", original_position);
-        println!("queue pos: {}", queue_position);
-        println!("percentage {}", percentage);
-
         Status {
             position: queue_position + 1,
             progress: percentage as usize,
@@ -216,13 +212,6 @@ async fn heartbeat(
             .await
             .unwrap();
     }
-    //TODO: store the initial time the key was set in here, so that you can give a MAX session time if needed
-    //TODO: move the initial setting of this key to when moving out of the queue, or bypassing the queue
-    // cmd("SET")
-    //     .arg(&[&token.claims.qid, &"1".to_string()])
-    //     .execute_async(&mut redis_conn)
-    //     .await
-    //     .unwrap();
 
     HttpResponse::Ok().finish()
 }
@@ -250,8 +239,8 @@ async fn index(
         .await
         .unwrap();
 
-    let queue_length: usize = get_queue_length(redis_pool.clone()).await;
-    let active_users: usize = get_active_length(redis_pool.clone()).await;
+    let queue_length: usize = get_queue_length(redis_pool.clone()).await + 1;
+    let active_users: usize = get_active_length(redis_pool.clone()).await + 1;
 
     let main_id: Uuid;
     if let Some(id) = session.get::<String>("id").unwrap() {
@@ -263,20 +252,20 @@ async fn index(
 
     // check if the user should queue
     // TODO: check if the user is in active users
-    if queue_length >= 1 || active_users >= should_queue_limit {
+    if queue_length > 1 || active_users >= should_queue_limit {
         println!("queueing {}", queue_length);
         if let None = session.get::<bool>("should_queue").unwrap() {
             // produce a test kafka message to add to queue
             let topic = "queue";
-            let _kafka_result = producer
-                .send(
-                    FutureRecord::to(topic)
-                        .payload(&main_id.to_string())
-                        .key("add"),
-                    Dur::from_secs(0), // TODO: check this
-                )
-                .await
-                .unwrap();
+            // let _kafka_result = producer
+            //     .send(
+            //         FutureRecord::to(topic)
+            //             .payload(&main_id.to_string())
+            //             .key("add"),
+            //         Dur::from_secs(0), // TODO: check this
+            //     )
+            //     .await
+            //     .unwrap();
 
             let position = push_to_queue(redis_pool, main_id).await;
             session.set("original_position", position).unwrap();
@@ -529,6 +518,13 @@ async fn main() -> std::io::Result<()> {
                 .await
                 .unwrap();
 
+            //TODO: learn how to handle passing around redis_conn properly to utilise get_queue_length() etc
+            let queue_length: usize = cmd("LLEN")
+                .arg(&["queue"])
+                .query_async(&mut redis_conn)
+                .await
+                .unwrap();
+
             let timeout: String = (env::var("ACTIVE_SESSION_TIMEOUT")
                 .unwrap()
                 .parse::<u16>()
@@ -536,29 +532,31 @@ async fn main() -> std::io::Result<()> {
                 * 60 as u16)
                 .to_string();
 
-            if active_length < active_user_limit {
-                println!("shorter");
+            if queue_length + 1 > 1 && active_length + 1 < active_user_limit {
                 let qty_to_move = active_user_limit - active_length;
                 for _ in 0..qty_to_move {
-                    // TODO: LMOVE is only in redis 6.2...
-                    let user: String = cmd("LMOVE")
+                    let user: Option<String> = cmd("LMOVE")
                         .arg(&["queue", "active", "LEFT", "RIGHT"])
                         .query_async(&mut redis_conn)
                         .await
                         .unwrap();
-                    println!("moving, {}", user);
-                    cmd("SET")
-                        .arg(&[&user, &Local::now().to_string()])
-                        .execute_async(&mut redis_conn)
-                        .await
-                        .unwrap();
-                    cmd("EXPIRE")
-                        .arg(&[&user, &timeout])
-                        .execute_async(&mut redis_conn)
-                        .await
-                        .unwrap();
+
+                    if let Some(u) = user {
+                        println!("moving, {}", u.clone());
+                        cmd("SET")
+                            .arg(&[u.clone(), Local::now().to_string()])
+                            .execute_async(&mut redis_conn)
+                            .await
+                            .unwrap();
+                        cmd("EXPIRE")
+                            .arg(&[u.clone(), timeout.clone()])
+                            .execute_async(&mut redis_conn)
+                            .await
+                            .unwrap();
+                    };
                 }
             }
+            // TODO: what impact will this have
             thread::sleep(Dur::from_millis(1000));
         }
     });
