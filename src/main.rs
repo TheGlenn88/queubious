@@ -1,5 +1,6 @@
 use actix_cors::Cors;
 use actix_rt::Arbiter;
+use actix_rt::System;
 use actix_session::CookieSession;
 use actix_session::Session;
 use actix_web::{
@@ -124,8 +125,6 @@ async fn get_queue_position(redis_pool: web::Data<Pool>, id: Uuid) -> Result<usi
         .query_async(&mut redis_conn)
         .await;
 
-    println!("LPOS {:?}", result);
-
     result
 }
 
@@ -229,6 +228,7 @@ async fn index(
     session: Session,
     redis_pool: web::Data<Pool>,
     producer: web::Data<FutureProducer>,
+    data: web::Data<AppData>,
 ) -> impl Responder {
     let mut redis_conn = redis_pool.get().await.unwrap();
 
@@ -247,7 +247,7 @@ async fn index(
         main_id = Uuid::parse_str(id.as_str()).unwrap();
     } else {
         main_id = Uuid::new_v4();
-        session.set("id", main_id.to_string()).unwrap();
+        session.insert("id", main_id.to_string()).unwrap();
     }
 
     // check if the user should queue
@@ -256,29 +256,44 @@ async fn index(
         println!("queueing {}", queue_length);
         if let None = session.get::<bool>("should_queue").unwrap() {
             // produce a test kafka message to add to queue
-            let topic = "queue";
-            // let _kafka_result = producer
-            //     .send(
-            //         FutureRecord::to(topic)
-            //             .payload(&main_id.to_string())
-            //             .key("add"),
-            //         Dur::from_secs(0), // TODO: check this
-            //     )
-            //     .await
-            //     .unwrap();
+            let _kafka_result = producer
+                .send(
+                    FutureRecord::to("queue")
+                        .payload(&main_id.to_string())
+                        .key("add"),
+                    Dur::from_secs(0), // TODO: check this
+                )
+                .await
+                .unwrap();
 
-            let position = push_to_queue(redis_pool, main_id).await;
-            session.set("original_position", position).unwrap();
-            session.set("should_queue", true).unwrap();
+            let position = push_to_queue(redis_pool.clone(), main_id).await;
+            session.insert("original_position", position).unwrap();
+            session.insert("should_queue", true).unwrap();
         }
 
-        HttpResponse::Found()
-            .header(http::header::LOCATION, "/waiting-room")
-            .finish()
+        let status = get_status(session, redis_pool.clone()).await;
+        let mut ctx = Context::new();
+        ctx.insert("position", &status.position);
+        ctx.insert("progress", &status.progress);
+        ctx.insert("wait_time", &status.wait_time);
+        ctx.insert("last_updated", &status.last_updated);
+        let rendered = data.tmpl.render("index.html", &ctx).unwrap();
+
+        HttpResponse::Ok().body(rendered)
     } else {
         println!("bypassing queue {}", queue_length);
 
         push_to_active(redis_pool.clone(), main_id).await;
+
+        let _kafka_result = producer
+            .send(
+                FutureRecord::to("active")
+                    .payload(&main_id.to_string())
+                    .key("add"),
+                Dur::from_secs(0), // TODO: check this
+            )
+            .await
+            .unwrap();
 
         cmd("SET")
             .arg(&[&main_id.to_string(), &Local::now().to_string()])
@@ -345,24 +360,6 @@ async fn status(
     } else {
         HttpResponse::BadRequest().finish()
     }
-}
-
-async fn waiting_room(
-    _req: HttpRequest,
-    session: Session,
-    redis_pool: web::Data<Pool>,
-    data: web::Data<AppData>,
-) -> impl Responder {
-    //TODO: remove the waiting_room function and combine this into the index function
-    let status = get_status(session, redis_pool).await;
-    let mut ctx = Context::new();
-    ctx.insert("position", &status.position);
-    ctx.insert("progress", &status.progress);
-    ctx.insert("wait_time", &status.wait_time);
-    ctx.insert("last_updated", &status.last_updated);
-    let rendered = data.tmpl.render("index.html", &ctx).unwrap();
-
-    HttpResponse::Ok().body(rendered)
 }
 
 async fn terminate_session(
@@ -452,7 +449,6 @@ async fn main() -> std::io::Result<()> {
             .route("/status", web::get().to(status))
             .route("/queubious.js", web::get().to(script))
             .route("/heartbeat", web::post().to(heartbeat))
-            .route("/waiting-room", web::get().to(waiting_room))
             .route("/terminate/{session_id}", web::get().to(terminate_session))
             .route("/{filename:.*}", web::get().to(static_files))
             .data(AppData { tmpl: tera.clone() })
@@ -477,7 +473,7 @@ async fn main() -> std::io::Result<()> {
         server.bind(format!("{}:{}", bind_ip, bind_port))?
     };
 
-    Arbiter::spawn(async move {
+    System::current().arbiter().spawn(async move {
         loop {
             /**
              * TODO: retrieve entire active list, loop the list and check dirctly for it's key/string value

@@ -2,7 +2,6 @@ import { Config } from '@stencil/core';
 import tailwindcss from 'tailwindcss';
 import { postcss } from '@stencil/postcss';
 import autoprefixer from 'autoprefixer';
-import purgecss from '@fullhuman/postcss-purgecss';
 
 export const config: Config = {
   plugins: [
@@ -10,19 +9,11 @@ export const config: Config = {
       plugins: [
         autoprefixer(),
         tailwindcss(),
-        purgecss({
-          preserveHtmlElements: true, 
-          content: [
-            './src/**/*.html',
-            './src/**/*.js',
-            './src/**/*.tsx'
-          ]
-        })
-      ]
-    })
+      ],
+    }),
   ],
   devServer: {
-    reloadStrategy: 'pageReload'
+    reloadStrategy: 'pageReload',
   },
   namespace: 'waiting-room',
   outputTargets: [

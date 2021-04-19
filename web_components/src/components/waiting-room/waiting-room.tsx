@@ -1,4 +1,4 @@
-import { Component, Prop, h, Method, State } from '@stencil/core';
+import { Component, Prop, h, Method, getAssetPath, State } from '@stencil/core';
 import { getQueueData } from '../../utils/utils';
 import { Message } from './queue-data.interface';
 
@@ -6,6 +6,7 @@ import { Message } from './queue-data.interface';
   tag: 'waiting-room',
   styleUrl: 'waiting-room.css',
   shadow: true,
+  assetsDirs: ['assets'],
 })
 export class WaitingRoom {
   @Prop({ reflect: true }) position: number;
@@ -62,62 +63,63 @@ export class WaitingRoom {
 
   render() {
     return (
-      <div class="flex items-center min-h-screen p-4 bg-gray-100 lg:justify-center text-black">
-        <div class="flex flex-col overflow-hidden bg-white rounded-md shadow-lg max md:flex-row md:flex-1 lg:max-w-screen-md">
-          <div class="p-4 py-6 bg-gray-200 md:w-80 md:flex-shrink-0 md:flex md:flex-col md:items-center md:justify-evenly">
-            <div>LOGO</div>
-            <div>
-              <h2>You are in a queue</h2>
-              <p>
-                The website is currently experiencing a high volume of traffic, to keep things running smoothly a queue has been formed. Please see below for an estimation of when
-                it will be your turn.
-              </p>
-            </div>
-            <div class="bar-main-container blue text-black">
-              <div class="wrap">
-                <div class="bar-percentage" ref={el => (this.bar_text = el as HTMLDivElement)}>
-                  0%
+      <div class="font-sans min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
+        <div class="relative py-3 sm:max-w-xl sm:mx-auto">
+          <div class="absolute inset-0 bg-gradient-to-r from-cyan-400 to-light-blue-500 shadow-lg transform -skew-y-6 sm:skew-y-0 sm:-rotate-6 sm:rounded-3xl"></div>
+          <div class="relative px-4 py-10 bg-white shadow-lg sm:rounded-3xl sm:p-20">
+            <div class="max-w-md mx-auto">
+              <div>
+                <img src={getAssetPath('./assets/logo.svg')} class="h-7 sm:h-8" />
+              </div>
+              <div class="divide-y divide-gray-200">
+                <div class="py-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
+                  <p> ||website|| is experiencing a higher than usual traffic, you are now in a queue.</p>
+                  <div class="w-full h-4 bg-gray-400 rounded-full mt-3">
+                    <div class="w-3/4 h-full text-center text-xs text-white bg-green-500 rounded-full">75%</div>
+                  </div>
+                  <ul>
+                    <li>Your position:</li>
+                    <li>Estimated Wait Time:</li>
+                    <li>Last updated:</li>
+                  </ul>
                 </div>
-                <div class="bar-container">
-                  <div class="bar" ref={el => (this.bar = el as HTMLDivElement)}></div>
+                {this.messages?.map(message => (
+                  <div class="messages">
+                    <div>{message.message}</div>
+                    <div>{message.timestamp}</div>
+                  </div>
+                ))}
+                <div class="pt-6">
+                  {!this.email_sent ? (
+                    <div>
+                      <div class="pt-6 text-base leading-6 font-bold sm:text-lg sm:leading-7">
+                        <p>Prefert not to wait?</p>
+                      </div>
+                      <div>
+                        <p>Send me an email when it's my turn:</p>
+                        <form onSubmit={e => this.handleSubmit(e)}>
+                          <input
+                            type="email"
+                            class="px-5 py-2 bg-gray-100shadow-inner rounded-md border border-gray-400 focus:outline-none"
+                            placeholder="your@mail.com"
+                            value={this.email}
+                            onInput={event => this.handleChange(event)}
+                            required
+                          ></input>
+                          <button class="bg-red-500 ml-2 text-gray-200 px-5 py-2 rounded shadow">Sign Up</button>
+                        </form>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <p>Thank you</p>
+                    </div>
+                  )}
+                  <div>
+                    <a href="#">Exit the queue</a> (And give up your position)
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="stats">
-              <p>Queue position: {this.position}</p>
-              <p>Estimated wait time: {this.wait_time}</p>
-              <p>Last updated: {this.last_updated}</p>
-            </div>
-            {this.messages?.map(message => (
-              <div class="messages">
-                <div>{message.message}</div>
-                <div>{message.timestamp}</div>
-              </div>
-            ))}
-            <div class="notify">
-              {!this.email_sent ? (
-                <div>
-                  <p>Send me an email when it's my turn:</p>
-                  <form onSubmit={e => this.handleSubmit(e)}>
-                    <input
-                      type="email"
-                      class="px-2 py-4 mr-2 bg-gray-100 shadow-inner rounded-md border border-gray-400 focus:outline-none"
-                      placeholder="your@mail.com"
-                      value={this.email}
-                      onInput={event => this.handleChange(event)}
-                      required
-                    ></input>
-                    <button class="bg-blue-600 text-gray-200 px-5 py-2 rounded shadow">Sign Up</button>
-                  </form>
-                </div>
-              ) : (
-                <div>
-                  <p>You will receive an email when it's your turn, you will have 10 minutes to click the link in the email.</p>
-                </div>
-              )}
-            </div>
-            <div class="footer">
-              <a href="#">Exit the queue</a> (And give up your position)
             </div>
           </div>
         </div>
