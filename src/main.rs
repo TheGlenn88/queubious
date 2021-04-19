@@ -99,7 +99,6 @@ async fn push_to_queue(redis_pool: web::Data<Pool>, id: Uuid) -> usize {
 
 async fn push_to_active(redis_pool: web::Data<Pool>, id: Uuid) -> usize {
     let mut redis_conn = redis_pool.get().await.unwrap();
-
     cmd("RPUSH")
         .arg(&["active", &id.to_string()])
         .query_async(&mut redis_conn)
